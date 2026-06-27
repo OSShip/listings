@@ -1,12 +1,12 @@
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
-COPY utils/ /app/packages/
+COPY utils/ /app/utils/
 COPY services/listings/ /app/services/listings/
 WORKDIR /app/services/listings
 RUN go mod download && CGO_ENABLED=0 go build -o /listings .
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates wget
 COPY --from=builder /listings /listings
 EXPOSE 8082
 CMD ["/listings"]
