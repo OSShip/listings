@@ -2,12 +2,14 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/OSShip/listings/internal/events"
 	"github.com/OSShip/listings/internal/model"
 	"github.com/OSShip/listings/internal/store"
+	"github.com/OSShip/utils/observability"
 )
 
 type Handler struct {
@@ -30,12 +32,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	list, err := h.Store.List(r.Context(), status, ossProject)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "list listings failed", "err", err)
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
 	}
 	if list == nil {
 		list = []model.Listing{}
 	}
+	slog.DebugContext(r.Context(), "listings fetched", "count", len(list), "status", status)
 	WriteJSON(w, http.StatusOK, list)
 }
 
@@ -43,9 +47,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	l, err := h.Store.Get(r.Context(), id)
 	if err != nil {
+		slog.InfoContext(r.Context(), "listing not found", "id", id)
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 		return
 	}
+	slog.DebugContext(r.Context(), "listing fetched", "id", id)
 	WriteJSON(w, http.StatusOK, l)
 }
 
@@ -53,12 +59,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-Id")
 	role := r.Header.Get("X-User-Role")
 	if userID == "" || role != "mentor" {
+		slog.WarnContext(r.Context(), "create listing forbidden", "user_id", userID, "role", role)
 		http.Error(w, `{"error":"mentor role required"}`, http.StatusForbidden)
 		return
 	}
 
 	approved, _ := h.Store.IsMentorApproved(r.Context(), userID)
 	if !approved {
+		slog.WarnContext(r.Context(), "create listing mentor not approved", "user_id", userID)
 		http.Error(w, `{"error":"mentor not approved"}`, http.StatusForbidden)
 		return
 	}
@@ -70,10 +78,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := h.Store.Create(r.Context(), userID, req)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "create listing failed", "user_id", userID, "err", err)
+		observability.CaptureError(err, map[string]string{"handler": "create_listing"})
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
 	}
-	_ = h.Events.PublishListingCreated(r.Context(), created.ID)
+	if err := h.Events.PublishListingCreated(r.Context(), created.ID); err != nil {
+		slog.WarnContext(r.Context(), "listing created event publish failed", "listing_id", created.ID, "err", err)
+	}
+	slog.InfoContext(r.Context(), "listing created", "listing_id", created.ID, "mentor_id", userID)
 	WriteJSON(w, http.StatusCreated, created)
 }
 
@@ -86,6 +99,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mentorID != userID {
+		slog.WarnContext(r.Context(), "update listing forbidden", "listing_id", id, "user_id", userID)
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return
 	}
@@ -100,9 +114,13 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.Update(r.Context(), id, req.Description, req.Status, req.PriceCents, req.DurationWeeks); err != nil {
+		slog.ErrorContext(r.Context(), "update listing failed", "listing_id", id, "err", err)
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
 	}
-	_ = h.Events.PublishListingUpdated(r.Context(), id)
+	if err := h.Events.PublishListingUpdated(r.Context(), id); err != nil {
+		slog.WarnContext(r.Context(), "listing updated event publish failed", "listing_id", id, "err", err)
+	}
+	slog.InfoContext(r.Context(), "listing updated", "listing_id", id, "status", req.Status)
 	h.Get(w, r)
 }
