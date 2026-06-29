@@ -32,8 +32,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	list, err := h.Store.List(r.Context(), status, ossProject)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list listings failed", "err", err)
-		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+		observability.RespondError(w, r, http.StatusInternalServerError, "internal", "list listings", err, "status", status)
 		return
 	}
 	if list == nil {
@@ -78,9 +77,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := h.Store.Create(r.Context(), userID, req)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "create listing failed", "user_id", userID, "err", err)
-		observability.CaptureError(err, map[string]string{"handler": "create_listing"})
-		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+		observability.RespondError(w, r, http.StatusInternalServerError, "internal", "create listing", err, "user_id", userID)
 		return
 	}
 	if err := h.Events.PublishListingCreated(r.Context(), created.ID); err != nil {
@@ -114,8 +111,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.Update(r.Context(), id, req.Description, req.Status, req.PriceCents, req.DurationWeeks); err != nil {
-		slog.ErrorContext(r.Context(), "update listing failed", "listing_id", id, "err", err)
-		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+		observability.RespondError(w, r, http.StatusInternalServerError, "internal", "update listing", err, "listing_id", id)
 		return
 	}
 	if err := h.Events.PublishListingUpdated(r.Context(), id); err != nil {
